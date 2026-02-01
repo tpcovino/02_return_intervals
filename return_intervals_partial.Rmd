@@ -1,5 +1,6 @@
 ---
 author: "YOUR NAME HERE"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output: 
   html_document:
     toc: true
@@ -7,29 +8,8 @@ output:
     toc_float: true
 ---
 
-# Learning module 2 - Return intervals (14 pts)
+# Learning module 2 - Return intervals (20 pts)
 
-- In this learning module we will focus on return intervals. We first need to understand return intervals before we can move onto the rational method and curve numbers.
-
-The repo for this module can be found [here](https://github.com/tpcovino/02_return_intervals.git){target="_blank"}
-
-## Background information
-
-Lecture from colleague Joel Sholtes on precipitation frequency analysis. 
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/3_EnTJaFCKg?si=1BYvBzA1fDjZK4Zv" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
-
-
-Short lecture on Intensity-Duration-Frequency (IDF) curves
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/JXSwKmfMZJo?si=nlHa4Th3ZCSzi2Ks" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
-
-Reading on frequency analysis of flow (e.g., floods). You should notice that the frequency analysis is the same whether we apply it to Q (flow) or P (precipitation). So as long as you understand the fundamental principles you will be able to do frequency analysis on either Q or P. 
-
-https://www.usgs.gov/centers/new-jersey-water-science-center/floods-recurrence-intervals-and-100-year-floods{target="_blank"}
-
-There are also probability lecture slides on D2L. Titled "probability.pptx". 
- 
 ## Intro
 
 In this lab we will look at some precipitation data to get an idea of return intervals for a given rain event. A return interval is the inverse of the probability. So if a certain rain even has a 10% probability of happening any year it has a 1/p return interval, so: R = 1/0.1 = 10 years. This means on average you can expect that size event about every ten years. From a probability perspective it is actually more correct to state that there is a 10% chance of that size rain event in any year. The reason this is better is that it communicates that you certainly can have a 10% probability event occur in back-to-back years.
@@ -43,103 +23,192 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results = F
 
 ## Packages
 
-We have a few new packages today. Those include rnoaa and leaflet. rnooa is a package used to download NOAA climate data. leaflet is a package for interactive mapping.
+We have a few new packages with this exercise. Those include GHCNr and leaflet, and a couple of spatial packages. GHNCr is a package used to download NOAA climate data, leaflet is a package for interactive mapping, and terra and sf are spatial packages that help us filter observation data by latitude and longitude.
 
 Recall that if you have not installed these packages on your computer you will need to run:
-
-install.packages("rnoaa") and so on for the others. 
+install.packages("GHCNr") and so on for the others. 
 
 ```{r}
 library(tidyverse)
-library(rnoaa) #this package is being deprecated, unfortunately. But should work for now. 
+#install.packages(c("GHCNr", "leaflet", "sf", "tigris"))
+library(GHCNr) 
 library(plotly)
 library(leaflet)
-library(lubridate)
+library(sf)
+library(tigris)
 ```
 
 ## Precipitation return intervals 
 
-First, let's start by getting some precipitation (P) data. rnoaa has a function called ghcnd_stations(). This function will download the site information for all stations in the GHCND network. 
+First, let's start by getting some precipitation (P) data. Access to NOAA data is through the web API
+'https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily' using the GHCNr package. The function stations() will download the site information (lat, lon, station no.) for all stations in the GHCND network.
 
-GHCND network
-- [Link](https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily){target="_blank"}
-
-```{r Prepare Data}
-
+```{r}
+#1. See what data exists
 # download all available station metadata
 # THIS CAN TAKE A WHILE! I'd suggest to run it only once and then comment it out with #.
-station_data_download <- ghcnd_stations()  
+#station_data_download <- stations()  
 
-# filter to only keep MT stations
-station_data <- station_data_download %>% 
-  filter(state == "BLANK")
+# View(station_data_download) #uncomment to see how View() works, or click on the variable name in the Global Environment in the top-right panel. Even without opening the df, we can see that there are over 200,000 obs. (rows). 
 
-# that's still a lot of stations. Let thin for "BOZEMAN"
+# Wow, there are a lot of stations available. Let's go through a quick exercise to demonstrate how you can find a station if you know the area of interest but not the station number.
 
-station_data_bzn <- station_data %>% 
-  filter(str_detect(name, "BLANK")) %>% 
-  # get rid of duplicate ids to make plotting easier
-  dplyr::distinct(id, .keep_all = TRUE)
+# 2. Subset spatially 
+# Since this dataframe provides lat lon data, we can filter by latitude and longitude to find stations within a certain 'bounding box'. Geospatial packages in R like sf and tigris can make retrieving latitude and longitude info for counties and states easy. 
 
-# Now, let's create a zoomable map with the stations around Gallatin County/Bozeman. Click around and find the station id for the precip gauge with the LONGEST timeseries. If you click on a station symbol, the first and last data year will appear. Obviously you can get this information from the station_data_gal data frame, but I wanted to show you the mapping capabilities. 
+# a. Get US county boundaries
+#tigris::counties()can fetch counties for a specific state.
+mt_counties <- counties(state = "MT", cb = TRUE, year = 2022) 
+# cb = TRUE gives a simpler (generalized) geometry
+
+# b. Filter for a specific county (e.g., Gallatin county, home of Bozeman and MSU)
+gallatin <- mt_counties %>%
+  dplyr::filter(NAME == "Gallatin")
+
+# c. We can use the geometry information in this dataframe to generate a bounding box
+bbox <- st_bbox(gallatin)
+#view(bbox)
+
+# d. Great, now we can use min and max box values to spatially filter the list of stations. 
+stations_gal <- station_data_download %>%
+  filter(
+    longitude >= bbox["xmin"],
+    longitude <= bbox["xmax"],
+    latitude  >= bbox["ymin"],
+    latitude  <= bbox["BLANK"]
+  )
+
+# 3. Explore metadata visually 
+# Now, let's create a zoomable map with the stations around Gallatin County/Bozeman. Zoom into Bozeman and click around and find the station id for the precip gauge with the LONGEST timeseries. If you click on a station symbol, the first and last data year will appear. Obviously you can get this information from the stations_gal data frame, but I wanted to show you the mapping capabilities. 
 
 gauge_map <- leaflet() %>% 
     # add a basemap
   addTiles() %>%
     # add markers for your station. The parameters are pretty self-explanatory
-  addAwesomeMarkers(data = station_data_bzn, lat = ~latitude, lng = ~longitude, label = ~id, popup = ~paste("Start date:", first_year, "<br>End date:", last_year))
+  addAwesomeMarkers(data =  stations_gal, lat = ~latitude, lng = ~longitude, label = ~station, popup = ~paste("Start date:", firstYear, "<br>End date:", lastYear))
 
 gauge_map
 ```  
 
-Ok, so we want station USC00241044, which runs from 1892 to now. We use the meteo_pull_monitors() function to do that. 
+For this exercise, we want station USC00241044, which runs from 1892 to now. We use the meteo_pull_monitors() function to do that. 
 ```{r}
-climate_data <-   meteo_pull_monitors(c("BLANK"),
-# precip, snow, min air temp, max air temp (we really won't use the temp and snow data, though, this is only to show you what else would be available)
-                      var = c("PRCP", "SNOW", "TMIN", "TMAX"),
-                      date_min = "1893-10-01",
-                      # set end date to September 30, 2022
-                      date_max = "2022-09-30")
+# 4. Pull a long time series. We can pull daily data directly from the url. This will store a file to your working directory that we will import and format in the next step. 
+
+station_id <- BLANK
+dly_file <- paste0(station_id, ".dly")
+
+url <- paste0("https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/all/", station_id, ".dly")
+download.file(url, destfile = paste0(station_id, ".dly"))
 ```
 
-Now we have some climate data. Take a minute to look at the climate_data df. First, just looking at the df we see that the data don't actually start until 1894. It is also always a good idea to just plot some data. Below plot prcp, snow, tmax and tmin. You can just make 4 different plots. This is just for visual inspection. This part of the process is called exploratory data analysis (EDA). This should always be the first step when downloading data whether you download the data from the internet or from a sensor in the field. 
+Now you should have a file named USC00241044.dly in the working directory. A .dly file is basically a “compact daily weather diary” from NOAA where each row records a month of a single weather variable (like temperature or precipitation) for a station, with one column per day. It’s designed for computers to read efficiently, but we usually turn it into a regular table so people can understand it easily. This next chunk might look like a lot, but try to understand what each line is doing. Lets check it out:
 
 ```{r}
+# GHCN-Daily format: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
+dly_file <- 'USC00241044.dly'
+
+# Check out the .txt link above. This is tells us how the .dly file is formatted (part III). You will see that each column in the .dly file is set by a fixed number of spaces. The next line cells R how wide each column is in the .dly file: the first 11 characters are the station ID, etc. 
+# widths
+fwf_widths <- c(
+  11, 4, 2, 4,          # ID, YEAR, MONTH, ELEMENT
+  rep(c(5, 1, 1, 1), 31) # VALUE + MFLAG + QFLAG + SFLAG for 31 days
+)
+
+# Lets create a vector containing column names. We'll do that in two steps here. First will name the  repeating daily columns (1-31 for each possible day of the month). 
+day_cols <- paste0(
+  rep(c("VALUE","MFLAG","QFLAG","SFLAG"), 31), # repeat names
+  rep(1:31, each=4)# append day number
+)
+
+col_names <- c("ID","YEAR","MONTH","ELEMENT", day_cols)
+length(col_names)  #should be 128, matches fwf_widths
+
+raw <- read.fwf(dly_file, widths = BLANK, col.names = col_names, stringsAsFactors = FALSE)
+
+# Drop all columns containing 'FLAG' (MFLAG, QFLAG, SFLAG). More filtering can be done with these but we are keeping it simple for the sake of the exercise. If interested, check the .txt link above for flag symbol definitions. 
+raw_value_only <- raw %>%
+  select(-contains("FLAG"))
+
+# Now pivot only the VALUE columns so that we have one row of data per day. First we'll identify the columns that contain daily data.
+value_cols <- grep("^VALUE\\d+$", names(raw_value_only), value = TRUE)
+
+# Now we are ready to filter and pivot the dataframe.
+long <- raw_value_only %>%
+  filter(ELEMENT %in% c("PRCP","SNOW","TMAX","TMIN")) %>% # Keeping only precip and temperature data for this exercise
+  pivot_longer(
+    cols = all_of(value_cols), # select all VALUE1-31 columns
+    names_to = "DAY",  #create two new columns: .value = VALUE, DAY = day number
+    names_pattern = "VALUE(\\d+)", # extract the pattern from column names: VALUE1 → VALUE + 1
+    values_to = "VALUE"
+  ) %>%
+  mutate(
+    DAY = as.integer(DAY), # convert DAY from string to number
+    VALUE = ifelse(VALUE %in% c(-9999, -999, -99), NA, VALUE)) %>% # Remove missing values (-9999) or invalid dates
+  filter(!is.na(VALUE)) %>%
+  filter(DAY <= days_in_month(make_date(YEAR, MONTH, 1))) %>%
+  mutate(DATE = make_date(YEAR, MONTH, DAY)) # combine YEAR, MONTH, DAY into a proper DATE column
+```
+
+Check out the 'long' dataframe. This should look similar to the plotted dataframes last week. From here, plotting is much cleaner than a wide dataframe, especially if we are interested in combining variables into a figure. One easy way to do this is to use facet_wrap()to generate individual plots for each element:
+
+```{r}
+ggplot(BLANK, aes(x = DATE, y = VALUE)) +
+  geom_line(color = "steelblue") +
+  facet_wrap(~ ELEMENT, scales = "free_y") +
+  labs(
+    title = "Daily Climate Variables by Element",
+    x = "Date",
+    y = "Value"
+  ) +
+  theme_minimal()
+```
+
+However, for the sake of demonstration, we'll work with tables that are easier to read. Pivot wider to make the dataframe easier for our 'human' inspection.
+
+```{r}
+climate_data <- long %>%
+  select(DATE, ELEMENT, VALUE) %>%
+  pivot_wider(names_from = ELEMENT, values_from = VALUE)
+
+head(climate_data)
+```
+
+Now we have some climate data in a 'wide' format that we are familiar with. Take a minute to inspect the climate_data df. First, just looking at the df in table format, we see that the data don't actually start until 1894. It is also always a good idea to just plot some data. Below plot prcp, snow, tmax and tmin. You can just make 4 different plots. This is just for visual inspection. This part of the process is called exploratory data analysis (EDA). This should always be the first step when downloading data whether you download the data from the internet or from a sensor in the field. 
+
+```{r}
+# Explore the data (also check other ELEMENTs here in the exploratory process)
 climate_data %>% 
-  ggplot(aes(x = date, y = prcp)) +
+  ggplot(aes(x = DATE, y = BLANK)) +
   geom_point()
 ```
 
-You might have noticed that the values seem to be much too large! Did you notice that? This is a great skill to develop. Have a look at the data and ask "are these numbers reasonable?". In this case, the answer would be no!
+How many millimeters of precipitation on average does Bozeman receive? You might have noticed that the daily values seem to be much too large! Did you notice that? This is a great skill to develop. Have a look at the data and ask "are these numbers reasonable?". In this case, the answer would be no!
 
-One thing to note is that NOAA data comes in tenths of degrees for temp and tenths of millimeters for precip. Type ?meteo_pull_monitors into the console and the help screen will tell you that. So, we need to clean up the df a bit. Let's do that here. 
+One thing to note is that NOAA data comes in tenths of degrees for temp and tenths of millimeters for precip. See variable definitions on the .txt link provided above. So, we need to clean up the df a bit. Let's do that here. 
 
 ```{r}
+# Filter or transform as needed
 climate_data_corr <- climate_data %>% 
   mutate(
-    # change names
-    name = recode(id, USC00241044
-                  = "msu_campus"),
     # division by 10 turns it into a normal decimal, 15.6 instead of 156
-    tmin = tmin / 10,
-    tmax = tmax / 10,
-    prcp = prcp / 10,
-    snow = snow / 10) %>%
-  # only take important stuff
-  select(name, id, everything())
+    TMIN = TMIN / 10,
+    TMAX = TMAX / 10,
+    PRCP = PRCP / 10,
+    SNOW = SNOW / 10) 
 ```
 
-Now that we've converted units, it is a good idea to plot your data again for some EDA. Make plots of each of the variables (prcp, snow, tmax, and tmin) over time to inspect. Render each variable in a different color or symbol. 
+Now that we've converted units, it is a good idea to plot your data again for some EDA. Make plots of each of the variables over time to inspect. 
 ```{r}
+# Check filtering and/or transformation
 # ggplotly(
 #   climate_data_corr %>% 
 #   ggplot(aes(x = date, y = prcp)) +
 #     geom_point() +
 #   geom_line(linetype = "dashed")
-# ) # I commented this out just because plotly is slow. 
+# ) # I commented this out just because plotly is slow. However, you should run once to see ggplotly interactive features.
 
 climate_data_corr %>% 
-  ggplot(aes(x = date, y = BLANK)) +
+  ggplot(aes(x = DATE, y = PRCP)) +
   geom_point()
 
 ```
@@ -149,51 +218,56 @@ How do the data look? Do they make sense? Do you see any strange values?
 There is a large snow event in 1951. We can assume that is "real", so let's keep it in the analysis. But you should think through how you could exclude it from the analysis. How could you use the filter function to do that? 
 
 Next, we want to use some skills from the hydrograph sep lab to add a water year (WY) column. Try that here. 
+
 ```{r}
+# Add calculations and summaries
 climate_data_corr <- climate_data_corr %>% 
-  mutate(month = month(date),
-         year = year(date),
-         wy = BLANK(month > 9, year + 1, year))
+  mutate(month = month(DATE),
+         year = year(BLANK),
+         wy = if_else(month > 9, year + 1, year))
 ```
 
-I like to rearrange the order of columns. Using: 
+I like to rearrange the order of columns using: 
+
 ```{r}
 climate_data_corr <- climate_data_corr %>% 
-  select(name, id, date, wy, everything())
+  select(DATE, wy, everything())
 ```
 
-Now, create a new df called climate_an where you calculate the total P (i.e., the sum) for each water year. Use group_by and summarize (or better yet, reframe). Also keep in mind that you will need to deal with NA values in the df. How do you do that in summarize? As a note, reframe can be used instead of summarize and is a more general purpose function. You can try each.   
+Now, create a new df called climate_an where you calculate the total P (i.e., the sum) for each water year. Use group_by and summarize (or better yet, reframe). Also keep in mind that you will need to deal with NA values in the df. How do you do that in reframe or summarize? As a note, reframe can be used instead of summarize and is a more general purpose function. You can try each.   
 ```{r}
 climate_an <- climate_data_corr %>% 
   group_by(wy) %>% 
-  BLANK(tot_p = sum(prcp,  BLANK), 
-            mean_max = mean(tmax, BLANK), 
-            mean_min = min(tmin, BLANK)) # I also calculate some temp stats here. Just out of curiousity. We don't use them in this lab. 
+  reframe(tot_p = sum(PRCP,  na.rm = TRUE), 
+            mean_max = mean(TMAX, na.rm = TRUE), 
+            mean_min = min(TMIN, na.rm = TRUE)) # I also calculate some temp stats here. Just out of curiousity. We don't use them in this lab. 
   
 ```
 
 What happens if you don't deal with NA values by using something like na.rm = TRUE?
 
-Now, plot total annual P on the Y and water year on the x. Plot in a blue dashed line with:
-geom_line(linetype = "dashed", color = "blue")
-What do you see? 
+Now, plot total annual P on the Y and water year on the x. What do you see? 
+
 ```{r}
 climate_an %>% 
-  ggplot()
+  BLANK(aes(x = wy, y = tot_p)) +
+  geom_point() +
+  geom_line(linetype = "dashed", color = "blue")
 ```
 
 Now let's calculate some probabilities. Look up the `pnorm()` function for this (either type it into the Help window, or type ?pnorm in the console. You only need x, the mean, and standard deviation (sd) for the calculations.
 
-### **Q1. (2 pts) What is the probability that the annual precipitation in a given year is less than 400 mm? This is the F(A) in the CDF in the probability lecture slides.** 
+### **Q1. (3 pts) What is the probability that the annual precipitation in a given year is less than 400 mm? This is the F(A) in the CDF in the probability lecture slides.** 
 
 ```{r}
+# Analysis and interpretation
 p_400 <- pnorm(400, mean(climate_an$tot_p), sd(climate_an$tot_p))
 p_400
 ```
 
 Q1 ANSWER:
 
-### **Q2. (2 pts) What is the probability that the maximum annual precipitation in a given year is GREATER than 500 mm?** 
+### **Q2. (3 pts) What is the probability that the maximum annual precipitation in a given year is GREATER than 500 mm?** 
 
 ```{r}
 p_500 <- pnorm(500, mean(climate_an$tot_p), sd(climate_an$tot_p))
@@ -203,7 +277,7 @@ ex_500
 
 Q2 ANSWER:
 
-### **Q3. (2 pts) What is the probability that the annual P is between 400 and 500 mm?**
+### **Q3. (3 pts) What is the probability that the annual P is between 400 and 500 mm?**
 
 ```{r}
 p_500_400 <- p_500 - p_400
@@ -211,17 +285,42 @@ p_500_400 <- p_500 - p_400
 p_500_400
 ```
 
-### **Q4. (2 pts) What is the return period for a year with AT LEAST 550 mm of precip? The return period, Tr, is calculated as Tr = 1/p, with p being the probability for an event to occur.**
+
+### **Q4. (3 pts) What is the return period for a year with AT LEAST 550 mm of precip? The return period, Tr, is calculated as Tr = 1/p, with p being the probability for an event to occur.**
 
 ```{r}
-p_550 <- pnorm(550, mean(climate_an$tot_p), sd(climate_an$tot_p))
+p_550 <- pnorm(550, mean(BLANK), sd(climate_an$tot_p))
 ex_550 <- 1 - p_550
 
 ri <- 1/ex_550
 ri
 ```
 
-### **Q5. (6 pts) Explain why probability analysis of climate data assumes the data are normally distributed and stationary? Below provide a histogram and a density plot of the total annual P data and comment on the visual appearance in terms of normality. Next use google and the links below to test for normality and stationarity. Be quantitative in commenting on the normality and stationarity of the total P data.** 
+Now lets think about what assumptions make return intervals valid. In the previous questions, you calculated probabilities and return intervals assuming that the historical climate record can be used to represent the future. These calculations rely on two key statistical assumptions:
+
+The data follow a known probability distribution (often assumed to be normal).
+
+The statistical properties of the data (mean, variance) do not change over time (stationarity).
+
+In this question, you will evaluate whether those assumptions are reasonable for the annual precipitation record.
+
+**Q5. (8 pts total)** 
+**a. Explain why probability analysis of climate data assumes**
+**- data are normally distributed**
+**- and stationary?** 
+  
+**b. Using the code below, create a histogram of total annual precipitation (tot_p) with a density curve overlaid. Briefly comment on whether the distribution appears approximately normal (e.g., symmetry, skewness, tails).**
+
+**c. Next, Use the Shapiro–Wilk test (code below) to formally test for normality.**
+
+**State:**
+**- the null hypothesis**
+**- the p-value**
+**-whether you reject normality at α = 0.05**
+
+**d. Stationarity (2 pts)**
+**Use the Ljung–Box test to assess whether the time series shows significant autocorrelation (i.e., non-stationarity).**
+**Explain what the result implies about stationarity and the validity of return interval estimates.**
 
 - [here](https://rpubs.com/richkt/269797){target="_blank"}  
 
@@ -230,18 +329,20 @@ ri
 - [here](http://www.sthda.com/english/wiki/normality-test-in-r){target="_blank"}
 
 ```{r}
-shapiro.test(climate_an$tot_p)
-
-lag.length = 25
-Box.test(climate_an$tot_p, lag = lag.length, type = "Ljung-Box") # test stationary signal
-```
-
-```{r}
 climate_an %>% 
   ggplot(aes(x = tot_p)) +
   theme_bw() +
-  geom_histogram(binwidth = 20, aes(y = after_stat(density)), colour = "black", fill = "gray") + # histogram
-  geom_density(alpha = 0.2, fill = "red") # density plot
+  geom_histogram(binwidth = 20, aes(y = after_stat(density)), colour = "BLANK", fill = "BLANK") + # histogram
+  geom_density(alpha = BLANK, fill = "BLANK") # density plot
+```
+
+```{r}
+shapiro.test(climate_an$tot_p)
+
+lag.length = 25
+Box.test(climate_an$tot_p, lag = lag.length, type = BLANK) # test stationary signal
+
+#remember that ?function() in your console can help you see options for function arguments. 
 ```
 
 
