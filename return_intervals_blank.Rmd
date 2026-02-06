@@ -78,7 +78,7 @@ First, let's start by getting some precipitation (P) data. Access to NOAA data i
 
 ```  
 
-For this exercise, we want station USC00241044, which runs from 1892 to now. We use the meteo_pull_monitors() function to do that. 
+For this exercise, we want station USC00241044, which runs from 1892 to now. 
 ```{r}
 # 4. Pull a long time series. We can pull daily data directly from the url. This will store a file to your working directory that we will import and format in the next step. 
 
